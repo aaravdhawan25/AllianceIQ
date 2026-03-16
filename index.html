@@ -793,12 +793,21 @@
     <div style="margin-top:12px;">
       <button class="save-btn" onclick="saveKeys()">Save Keys</button>
     </div>
-    <div class="api-note">
-      FTC API token: <a href="https://ftc-events.firstinspires.org/services/API/register" target="_blank">Register here (free)</a> — you'll get a username + authorization token by email.<br>
-      AI is optional — without a key, the site uses a built-in scoring algorithm for smart analysis.<br>
-      OpenAI key: <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a> &nbsp;·&nbsp;
-      Anthropic key: <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a><br>
-      All keys are stored in your browser only — never sent anywhere except the AI provider you choose.
+    <div style="margin-top:14px;">
+      <div class="api-row">
+        <div class="field-group wide">
+          <label>Cloudflare Worker URL (required for CORS fix)</label>
+          <input type="text" id="workerUrl" placeholder="https://ftc-proxy.yourname.workers.dev" autocomplete="off" style="text-transform:none; font-size:0.8rem; letter-spacing:0; width:360px;">
+        </div>
+        <button class="save-btn" onclick="saveKeys()" style="align-self:flex-end;">Save All</button>
+      </div>
+    </div>
+    <div class="api-note" style="margin-top:10px;">
+      ⚠️ <b>CORS fix required:</b> The FTC API blocks direct browser requests. Deploy the free Cloudflare Worker (download below) and paste its URL above.<br>
+      FTC API token: <a href="https://ftc-events.firstinspires.org/services/API/register" target="_blank">Register here (free)</a> — username + token emailed to you.<br>
+      AI is optional — works great with no AI key using built-in analysis.<br>
+      OpenAI: <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a> &nbsp;·&nbsp;
+      Anthropic: <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
     </div>
   </div>
 
@@ -904,6 +913,8 @@ function saveKeys() {
   if (key) localStorage.setItem('ftcKey', key);
   if (oai) localStorage.setItem('openaiKey', oai);
   if (ant) localStorage.setItem('anthropicKey', ant);
+  const worker = document.getElementById('workerUrl').value.trim();
+  if (worker) localStorage.setItem('workerUrl', worker);
   localStorage.setItem('aiProvider', provider);
   localStorage.setItem('openaiModel', model);
   showStatus('Keys saved to browser storage.', false, true);
@@ -923,6 +934,8 @@ function loadKeys() {
   if (a) document.getElementById('anthropicKey').value = a;
   if (p) { document.getElementById('aiProvider').value = p; toggleAIFields(); }
   if (m) document.getElementById('openaiModel').value = m;
+  const w = localStorage.getItem('workerUrl');
+  if (w) document.getElementById('workerUrl').value = w;
 }
 
 // ─── STATUS HELPERS ──────────────────────────────────────────────
@@ -956,35 +969,22 @@ const PROXY_BASE = 'https://corsproxy.io/?url=' + encodeURIComponent(FTC_BASE);
 async function ftcFetch(path, season) {
   const user = (document.getElementById('ftcUser').value.trim() || localStorage.getItem('ftcUser') || '').toLowerCase();
   const key = document.getElementById('ftcKey').value.trim() || localStorage.getItem('ftcKey') || '';
+  const workerUrl = (document.getElementById('workerUrl').value.trim() || localStorage.getItem('workerUrl') || '').replace(/\/$/, '');
 
-  if (!user || !key) throw new Error('FTC API credentials not set. Please enter your FTC API username and token above.');
+  if (!user || !key) throw new Error('FTC API credentials not set. Enter your FTC username and authorization token above.');
+  if (!workerUrl) throw new Error('Cloudflare Worker URL not set. Add your worker URL above to fix CORS. See the cloudflare-worker.js file to set it up (takes 2 minutes, free).');
 
   const token = btoa(user + ':' + key);
-  const targetUrl = FTC_BASE + '/' + season + path;
+  const targetUrl = workerUrl + '/v2.0/' + season + path;
 
-  const proxies = [
-    'https://corsproxy.io/?url=' + encodeURIComponent(targetUrl),
-    'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl),
-    'https://thingproxy.freeboard.io/fetch/' + targetUrl,
-  ];
+  const res = await fetch(targetUrl, {
+    headers: { 'Authorization': 'Basic ' + token, 'Accept': 'application/json' }
+  });
 
-  let lastErr = null;
-  for (const proxyUrl of proxies) {
-    try {
-      const res = await fetch(proxyUrl, {
-        headers: { 'Authorization': 'Basic ' + token, 'Accept': 'application/json' }
-      });
-      if (res.status === 401) throw new Error('FTC API auth failed. Double-check your username and authorization token.');
-      if (res.status === 404) throw new Error('Event not found. Check the event code and season year (try 2024 or 2025).');
-      if (!res.ok) throw new Error('FTC API error ' + res.status);
-      return res.json();
-    } catch (e) {
-      lastErr = e;
-      if (e.message.includes('auth failed') || e.message.includes('not found')) throw e;
-    }
-  }
-
-  throw new Error('Network/CORS error. Best fix: host on GitHub Pages instead of opening locally. (' + (lastErr ? lastErr.message : 'unknown') + ')');
+  if (res.status === 401) throw new Error('FTC API auth failed. Double-check your username (lowercase) and authorization token.');
+  if (res.status === 404) throw new Error('Event not found. Check the event code and season year (try 2024 or 2025).');
+  if (!res.ok) throw new Error('FTC API error ' + res.status);
+  return res.json();
 }
 
 // ─── MAIN SCOUT FLOW ─────────────────────────────────────────────
